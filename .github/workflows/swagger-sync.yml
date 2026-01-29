@@ -35,7 +35,7 @@ jobs:
           java -jar target/common-api-3.6.0.war &
           sleep 10
           for i in {1..30}; do
-            if curl -s http://localhost:8083/v3/api-docs > /dev/null; then
+            if curl -s http://localhost:8080/v3/api-docs > /dev/null; then
               echo "Application is running"
               exit 0
             fi
@@ -48,7 +48,7 @@ jobs:
 
       - name: Fetch Swagger JSON
         run: |
-          curl -s http://localhost:8083/v3/api-docs -o swagger-temp.json
+          curl -s http://localhost:8080/v3/api-docs -o swagger-temp.json
           if [ ! -f swagger-temp.json ] || [ ! -s swagger-temp.json ]; then
             echo "Failed to fetch swagger.json"
             exit 1
