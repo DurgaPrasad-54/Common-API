@@ -1,0 +1,73 @@
+name: Extract and Sync Swagger Documentation
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  extract-swagger:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: iemr
+        options: >-
+          --health-cmd="mysqladmin ping -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 3306:3306
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Create secondary DB
+        run: |
+          mysql -h127.0.0.1 -uroot -proot -e "CREATE DATABASE db_reporting;"
+
+      - name: Build WAR
+        run: mvn clean package -DskipTests
+
+      - name: Run app in swagger mode
+        run: |
+          java -jar target/*.war \
+            --spring.profiles.active=swagger \
+            --server.port=8083 > app.log 2>&1 &
+          echo $! > app.pid
+
+      - name: Wait for Swagger
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:8083/v3/api-docs; then exit 0; fi
+            sleep 4
+          done
+          cat app.log
+          exit 1
+
+      - name: Fetch Swagger JSON
+        run: curl http://localhost:8083/v3/api-docs -o swagger-common-api.json
+
+      - name: Stop app
+        if: always()
+        run: kill $(cat app.pid) || true
+
+      - name: Create PR to AMRIT-Docs
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update Common-API swagger"
+          branch: auto/common-api-swagger
+          title: "Update Common-API Swagger"
+          body: "Automated swagger sync from Common-API"
+          path: swagger-common-api.json
