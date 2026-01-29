@@ -34,15 +34,14 @@ jobs:
         run: |
           mvn clean package \
             -DskipTests \
-            -Dgit.skip=true \
-            -Dspring.profiles.active=ci
+            -Dgit.skip=true
         timeout-minutes: 15
         env:
           MAVEN_OPTS: "-Xmx1024m"
 
       - name: Start Spring Boot app for Swagger generation
         run: |
-          java -jar target/common-api-*.war > /tmp/app.log 2>&1 &
+          java -Dspring.profiles.active=ci -jar target/common-api-*.war > /tmp/app.log 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> $GITHUB_ENV
           
