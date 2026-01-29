@@ -49,6 +49,17 @@ server:
 cti:
   enabled: false
 
+# CORS configuration (required by FilterConfig, CorsConfig, HTTPRequestInterceptor)
+cors:
+  allowed-origins: "*"
+
+# Required properties
+spring.session.store-type: none
+spring.redis.enabled: false
+enableIPValidation: false
+iemr.extend.expiry.time: false
+iemr.session.expiry.time: 7200
+
 # Minimal logging
 logging:
   level:
