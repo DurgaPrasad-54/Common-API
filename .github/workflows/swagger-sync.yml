@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - '.github/workflows/swagger-sync.yml'
 
 permissions:
   contents: read
@@ -11,7 +15,7 @@ permissions:
 jobs:
   sync-swagger:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout Common-API repository
@@ -26,63 +30,111 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Build Spring Boot application
-        run: mvn clean package -DskipTests -Dgit.skip=true
-        timeout-minutes: 15
-
-      - name: Wait for application startup
+      - name: Build Spring Boot application with CI profile
         run: |
-          java -jar target/common-api-3.6.0.war &
-          sleep 10
-          for i in {1..30}; do
-            if curl -s http://localhost:8080/v3/api-docs > /dev/null; then
-              echo "Application is running"
-              exit 0
+          mvn clean package \
+            -DskipTests \
+            -Dgit.skip=true \
+            -Dspring.profiles.active=ci
+        timeout-minutes: 15
+        env:
+          MAVEN_OPTS: "-Xmx1024m"
+
+      - name: Start Spring Boot app for Swagger generation
+        run: |
+          java -jar target/common-api-*.war > /tmp/app.log 2>&1 &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+          
+          # Wait for app to start
+          echo "Waiting for Spring Boot application to start..."
+          for i in {1..60}; do
+            if [ $i -eq 60 ]; then
+              echo "ERROR: Application failed to start after 60 attempts"
+              echo "=== Last 50 lines of application log ==="
+              tail -50 /tmp/app.log || echo "No logs available"
+              exit 1
             fi
-            echo "Attempt $i: Waiting for application to start..."
-            sleep 2
+            
+            if curl -s -f http://localhost:8080/v3/api-docs > /dev/null 2>&1; then
+              echo "✓ Application started successfully (attempt $i)"
+              break
+            fi
+            
+            echo "  Attempt $i/60: Waiting for /v3/api-docs endpoint..."
+            sleep 1
           done
-          echo "Application failed to start"
-          exit 1
         timeout-minutes: 2
 
-      - name: Fetch Swagger JSON
+      - name: Generate Swagger JSON
         run: |
           curl -s http://localhost:8080/v3/api-docs -o swagger-temp.json
+          
           if [ ! -f swagger-temp.json ] || [ ! -s swagger-temp.json ]; then
-            echo "Failed to fetch swagger.json"
+            echo "ERROR: Failed to fetch swagger.json from /v3/api-docs"
             exit 1
           fi
-          cat swagger-temp.json | jq . > swagger-formatted.json
+          
+          # Validate and format JSON
+          if command -v jq &> /dev/null; then
+            jq . swagger-temp.json > swagger-formatted.json 2>/dev/null || \
+              cp swagger-temp.json swagger-formatted.json
+          else
+            cp swagger-temp.json swagger-formatted.json
+          fi
+          
+          echo "✓ Swagger JSON generated successfully"
+          echo "File size: $(wc -c < swagger-formatted.json) bytes"
         timeout-minutes: 1
 
-      - name: Kill Spring Boot application
+      - name: Stop Spring Boot application
         if: always()
-        run: pkill -f "java -jar target/common-api-3.6.0.war" || true
+        run: |
+          if [ ! -z "$APP_PID" ]; then
+            kill $APP_PID 2>/dev/null || true
+            sleep 2
+          fi
+          pkill -f "java -jar" 2>/dev/null || true
+          echo "✓ Application stopped"
 
       - name: Clone AMRIT-Docs repository
         env:
           AMRIT_DOCS_TOKEN: ${{ secrets.AMRIT_DOCS_TOKEN }}
         run: |
-          git clone --depth 1 https://x-access-token:${AMRIT_DOCS_TOKEN}@github.com/AMRIT-GITHUB-ORG/AMRIT-Docs.git docs-repo
+          if [ -z "$AMRIT_DOCS_TOKEN" ]; then
+            echo "WARNING: AMRIT_DOCS_TOKEN secret not configured"
+            echo "Skipping sync to AMRIT-Docs"
+            exit 0
+          fi
+          
+          git clone --depth 1 \
+            https://x-access-token:${AMRIT_DOCS_TOKEN}@github.com/AMRIT-GITHUB-ORG/AMRIT-Docs.git \
+            docs-repo
+          echo "✓ AMRIT-Docs repository cloned"
         timeout-minutes: 2
 
-      - name: Check if swagger content changed
+      - name: Check if Swagger content changed
         id: check_changes
         run: |
           SWAGGER_FILE="docs-repo/docs/swagger/common-api.json"
           
+          if [ ! -d "docs-repo" ]; then
+            echo "Skipping sync: AMRIT-Docs not available"
+            echo "changed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
           if [ -f "$SWAGGER_FILE" ]; then
             if cmp -s swagger-formatted.json "$SWAGGER_FILE"; then
               echo "changed=false" >> $GITHUB_OUTPUT
-              echo "Swagger content is unchanged"
+              echo "ℹ Swagger content is unchanged, skipping push"
             else
               echo "changed=true" >> $GITHUB_OUTPUT
-              echo "Swagger content has changed"
+              echo "✓ Swagger content has changed, will update"
             fi
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "Swagger file does not exist, will create it"
+            echo "✓ Swagger file does not exist, will create"
           fi
 
       - name: Update Swagger file in AMRIT-Docs
@@ -90,6 +142,7 @@ jobs:
         run: |
           mkdir -p docs-repo/docs/swagger
           cp swagger-formatted.json docs-repo/docs/swagger/common-api.json
+          echo "✓ Swagger file updated: docs/swagger/common-api.json"
 
       - name: Commit and push to AMRIT-Docs
         if: steps.check_changes.outputs.changed == 'true'
@@ -99,10 +152,18 @@ jobs:
           cd docs-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
           git add docs/swagger/common-api.json
-          git commit -m "chore: sync swagger from Common-API [skip ci]" \
-            -m "Automated swagger documentation sync triggered by commit ${{ github.sha }}"
-          git push origin main
+          
+          git commit -m "chore: sync swagger from Common-API $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          
+          git push origin main || {
+            echo "Push failed, retrying..."
+            git pull --rebase origin main
+            git push origin main
+          }
+          
+          echo "✓ Changes pushed to AMRIT-Docs repository"
         timeout-minutes: 2
 
       - name: Cleanup
