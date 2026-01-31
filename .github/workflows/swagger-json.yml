@@ -46,6 +46,7 @@ jobs:
               else
                 echo "Invalid JSON received from API."
                 cat tmp_swagger.json
+                cat app.log || true
                 exit 1
               fi
             fi
@@ -55,9 +56,13 @@ jobs:
 
           if [ ! -s common-api.json ]; then
             echo "Swagger JSON not generated"
-            cat app.log
+            cat app.log || true
             exit 1
           fi
+
+      - name: Print app.log on failure
+        if: failure()
+        run: cat app.log || true
 
 
       - name: Stop Spring Boot API
