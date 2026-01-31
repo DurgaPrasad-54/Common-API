@@ -23,6 +23,10 @@ jobs:
       - name: Build API (skip tests)
         run: mvn clean package -DskipTests
 
+
+      - name: Ensure jq is installed
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Run API in CI profile (background)
         run: |
           mvn spring-boot:run \
@@ -31,22 +35,29 @@ jobs:
             > app.log 2>&1 &
           echo $! > api_pid.txt
 
-        - name: Wait for API & fetch Swagger (pretty)
-          run: |
-            for i in {1..30}; do
-              if curl -s http://localhost:9090/v3/api-docs | jq . > common-api.json; then
-                echo "Swagger JSON fetched"
+      - name: Wait for API & fetch Swagger (pretty)
+        run: |
+          for i in {1..30}; do
+            RESPONSE=$(curl -s -w '%{http_code}' -o tmp_swagger.json http://localhost:9090/v3/api-docs)
+            if [ "$RESPONSE" = "200" ]; then
+              if jq . tmp_swagger.json > common-api.json; then
+                echo "Swagger JSON fetched and pretty-printed"
                 break
+              else
+                echo "Invalid JSON received from API."
+                cat tmp_swagger.json
+                exit 1
               fi
-              echo "Waiting for API... ($i)"
-              sleep 5
-            done
-
-            if [ ! -s common-api.json ]; then
-              echo "Swagger JSON not generated"
-              cat app.log
-              exit 1
             fi
+            echo "Waiting for API... ($i)"
+            sleep 5
+          done
+
+          if [ ! -s common-api.json ]; then
+            echo "Swagger JSON not generated"
+            cat app.log
+            exit 1
+          fi
 
 
       - name: Stop Spring Boot API
