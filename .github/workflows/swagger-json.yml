@@ -31,22 +31,23 @@ jobs:
             > app.log 2>&1 &
           echo $! > api_pid.txt
 
-      - name: Wait for API & fetch Swagger
-        run: |
-          for i in {1..30}; do
-            if curl --fail http://localhost:9090/v3/api-docs -o common-api.json; then
-              echo "Swagger JSON fetched"
-              break
-            fi
-            echo "Waiting for API... ($i)"
-            sleep 5
-          done
+        - name: Wait for API & fetch Swagger (pretty)
+          run: |
+            for i in {1..30}; do
+              if curl -s http://localhost:9090/v3/api-docs | jq . > common-api.json; then
+                echo "Swagger JSON fetched"
+                break
+              fi
+              echo "Waiting for API... ($i)"
+              sleep 5
+            done
 
-          if [ ! -s common-api.json ]; then
-            echo "Swagger JSON not generated"
-            cat app.log
-            exit 1
-          fi
+            if [ ! -s common-api.json ]; then
+              echo "Swagger JSON not generated"
+              cat app.log
+              exit 1
+            fi
+
 
       - name: Stop Spring Boot API
         run: |
