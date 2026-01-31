@@ -55,7 +55,7 @@ jobs:
       - name: Checkout AMRIT-Docs repo
         uses: actions/checkout@v4
         with:
-          repository: PSMRI/AMRIT-Docs
+          repository: DurgaPrasad-54/AMRIT-Docs
           token: ${{ secrets.DOCS_REPO_TOKEN }}
           path: amrit-docs
 
