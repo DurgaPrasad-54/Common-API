@@ -23,14 +23,29 @@ jobs:
       - name: Build API (skip tests)
         run: mvn clean package -DskipTests
 
-      - name: Run API in CI profile
-        run: |
-          mvn spring-boot:run
-          sleep 25
 
-      - name: Fetch Swagger JSON
+      - name: Run API in CI profile (background)
         run: |
-          curl http://localhost:8080/v3/api-docs -o common-api.json
+          nohup mvn spring-boot:run &
+          echo $! > api_pid.txt
+
+      - name: Wait for API to be ready and fetch Swagger JSON
+        run: |
+          for i in {1..30}; do
+            if curl --fail http://localhost:8080/v3/api-docs -o common-api.json; then
+              echo "Swagger JSON fetched."
+              break
+            fi
+            echo "Waiting for API... ($i)"
+            sleep 5
+          done
+          if [ ! -f common-api.json ]; then
+            echo "Failed to fetch Swagger JSON"; exit 1;
+          fi
+
+      - name: Stop Spring Boot API
+        run: |
+          pkill -f 'spring-boot:run' || true
 
       - name: Checkout AMRIT-Docs repo
         uses: actions/checkout@v4
