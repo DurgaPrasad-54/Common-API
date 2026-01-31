@@ -23,7 +23,6 @@ jobs:
       - name: Build API (skip tests)
         run: mvn clean package -DskipTests
 
-
       - name: Ensure jq is installed
         run: sudo apt-get update && sudo apt-get install -y jq
 
@@ -38,36 +37,28 @@ jobs:
       - name: Wait for API & fetch Swagger (pretty)
         run: |
           for i in {1..30}; do
-            RESPONSE=$(curl -s -w '%{http_code}' -o tmp_swagger.json http://localhost:9090/v3/api-docs)
-            if [ "$RESPONSE" = "200" ]; then
-              if jq . tmp_swagger.json > common-api.json; then
-                echo "Swagger JSON fetched and pretty-printed"
-                break
-              else
-                echo "Invalid JSON received from API."
-                cat tmp_swagger.json
-                cat app.log || true
-                exit 1
-              fi
+            HTTP_CODE=$(curl -s -o tmp_swagger.json -w "%{http_code}" http://localhost:9090/v3/api-docs || true)
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              jq . tmp_swagger.json > common-api.json
+              echo "Swagger JSON fetched and pretty-printed"
+              exit 0
             fi
+
             echo "Waiting for API... ($i)"
             sleep 5
           done
 
-          if [ ! -s common-api.json ]; then
-            echo "Swagger JSON not generated"
-            cat app.log || true
-            exit 1
-          fi
-
-      - name: Print app.log on failure
-        if: failure()
-        run: cat app.log || true
-
+          echo "Swagger JSON not generated after waiting"
+          cat app.log || true
+          exit 1
 
       - name: Stop Spring Boot API
+        if: always()
         run: |
-          kill $(cat api_pid.txt) || true
+          if [ -f api_pid.txt ]; then
+            kill $(cat api_pid.txt) || true
+          fi
 
       - name: Checkout AMRIT-Docs repo
         uses: actions/checkout@v4
@@ -86,5 +77,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add docs/swagger/common-api.json
-          git commit -m "Auto-update Common-API swagger" || echo "No changes"
+          git commit -m "Auto-update Common-API swagger" || echo "No changes to commit"
           git push
